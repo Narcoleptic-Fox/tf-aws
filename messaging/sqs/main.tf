@@ -16,6 +16,7 @@ data "aws_region" "current" {}
 locals {
   queue_name     = var.fifo_queue ? "${var.name}.fifo" : var.name
   dlq_queue_name = var.fifo_queue ? "${var.name}-dlq.fifo" : "${var.name}-dlq"
+  redrive_target_arn = var.create_dlq ? aws_sqs_queue.dlq[0].arn : var.dlq_arn
 }
 
 # -----------------------------------------------------------------------------
@@ -70,23 +71,11 @@ resource "aws_sqs_queue" "main" {
   kms_master_key_id       = var.kms_key_arn
   kms_data_key_reuse_period_seconds = var.kms_key_arn != null ? var.kms_data_key_reuse_period : null
 
-  # Dead-letter queue
-  dynamic "redrive_policy" {
-    for_each = var.create_dlq ? [1] : []
-    content {
-      deadLetterTargetArn = aws_sqs_queue.dlq[0].arn
-      maxReceiveCount     = var.max_receive_count
-    }
-  }
-
-  # External DLQ
-  dynamic "redrive_policy" {
-    for_each = var.dlq_arn != null ? [1] : []
-    content {
-      deadLetterTargetArn = var.dlq_arn
-      maxReceiveCount     = var.max_receive_count
-    }
-  }
+  # Dead-letter queue (inline JSON string expected by aws_sqs_queue resource)
+  redrive_policy = local.redrive_target_arn != null ? jsonencode({
+    deadLetterTargetArn = local.redrive_target_arn
+    maxReceiveCount     = var.max_receive_count
+  }) : null
 
   tags = merge(var.tags, {
     Name = local.queue_name
